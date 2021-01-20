@@ -9,14 +9,11 @@ mod sig;
 
 use super::quote::Quote;
 use key::Key;
-use sample_v3quote::SAMPLE_V3QUOTE;
 use sig::Signature;
 
 use std::{borrow::Borrow, convert::TryFrom, error::Error, ops::Deref};
 
 use openssl::x509::*;
-use percent_encoding::percent_decode;
-use reqwest::blocking::get;
 
 /// The tenant requests attestation of an enclave from the platform's attestation daemon, and
 /// receives a Quote from the daemon. The Quote verifies the enclave's measurement. The tenant
@@ -32,10 +29,33 @@ use reqwest::blocking::get;
 /// For more informtation on Intel's Attestation Key and the Quote, you may refer to:
 /// https://download.01.org/intel-sgx/dcap-1.0/docs/SGX_ECDSA_QuoteGenReference_DCAP_API_Linux_1.0.pdf
 
+/// Retrieve the Intel certificate chain from `api.trustedservices.intel.com`
+///
+/// This requires an online connection!
+#[cfg(feature = "chain_get")]
 #[allow(dead_code)]
-fn verify() -> Result<(), Box<dyn Error>> {
-    let quote_bytes = &SAMPLE_V3QUOTE[..];
+pub fn get_intel_cert_chain_pem() -> Result<String, Box<dyn Error>> {
+    use percent_encoding::percent_decode;
+    use reqwest::blocking::get;
 
+    // Use Intel's API to retrieve the publicly available PCK Certificate Chain, including the root
+    // certificate and intermediate certificate. The embedded leaf certificate retrieved from the
+    // Quote will be validated by this chain.
+    let res =
+        get("https://api.trustedservices.intel.com/sgx/certification/v1/pckcrl?ca=processor")?;
+    let chain = res
+        .headers()
+        .get("SGX-PCK-CRL-Issuer-Chain")
+        .unwrap()
+        .as_bytes();
+    let trusted_public_pck_chain = percent_decode(&chain).decode_utf8_lossy();
+
+    Ok(trusted_public_pck_chain.to_string())
+}
+
+/// Verify a quote against a trusted certificate chain
+#[allow(dead_code)]
+pub fn verify(quote_bytes: &[u8], trusted_public_pck_chain: &str) -> Result<(), Box<dyn Error>> {
     // The material (Quote Header || ISV Enclave Report) signed by Quoting Enclave's Attestation Key
     // is retrieved.
     let att_key_signed_material = Quote::raw_header_and_body(quote_bytes)?;
@@ -52,22 +72,10 @@ fn verify() -> Result<(), Box<dyn Error>> {
     let q_qe_report_sig = q_sig.qe_report_sig();
     let q_auth_data = q_sig.qe_auth();
 
-    // Use Intel's API to retrieve the publicly available PCK Certificate Chain, including the root
-    // certificate and intermediate certificate. The embedded leaf certificate retrieved from the
-    // Quote will be validated by this chain.
-    let res = get("https://api.trustedservices.intel.com/sgx/certification/v1/pckcrl?ca=processor")
-        .expect("unable to get PCK cert data from Intel's API");
-    let chain = res
-        .headers()
-        .get("SGX-PCK-CRL-Issuer-Chain")
-        .unwrap()
-        .as_bytes();
-    let trusted_public_pck_chain = percent_decode(&chain).decode_utf8_lossy();
-
     // The Quote's Certification Data contains the PCK Cert Chain and PCK Leaf Certificate;
     // the PCK corresponding to the Leaf Certificate signs the Attestation Key.
     let certs = q_sig.qe_cert_data_pckchain()?;
-    let quote_pck_leaf_cert = certs.leaf_cert();
+    let quote_pck_leaf_cert = &certs.leaf_cert;
 
     // The PCK chain is reconstructed with the Quote's leaf cert added to end of tenant's chain.
     let cert_chain = cert_chain::CertChain::new_from_chain(
@@ -79,13 +87,11 @@ fn verify() -> Result<(), Box<dyn Error>> {
     // The PCK certificate chain's issuers and signatures are verified.
     cert_chain.verify_issuers()?;
     cert_chain.verify_sigs()?;
-    println!("CLIENT: 	 PCK cert chain OK");
 
     // The Attestation Key's signature on the Quote is verified.
     let attestation_key = Key::new_from_xy(&q_att_key_pub.to_vec())?;
     let quote_signature = Signature::try_from(&q_enclave_report_sig.to_vec()[..])?.to_der_vec()?;
     attestation_key.verify_sig(&att_key_signed_material, &quote_signature)?;
-    println!("CLIENT: 	 Quote signature OK");
 
     // The PCK's signature on the Attestation Public Key is verified.
     let pc_key = Key::new_from_pubkey(quote_pck_leaf_cert.public_key()?);
@@ -93,7 +99,6 @@ fn verify() -> Result<(), Box<dyn Error>> {
     pc_key
         .borrow()
         .verify_sig(&q_qe_report, &qe_report_signature)?;
-    println!("CLIENT: 	 Attestation Key signature OK");
 
     // This verifies that the hashed material signed by the PCK is correct.
     let mut unhashed_data = Vec::new();
@@ -102,13 +107,24 @@ fn verify() -> Result<(), Box<dyn Error>> {
     pc_key
         .borrow()
         .verify_hash(hashed_reportdata, unhashed_data)?;
-    println!("CLIENT: 	 Enclave report hash OK");
-    println!("\nCLIENT: 	 Attestation Complete");
 
     Ok(())
 }
 
-#[test]
-fn verify_sample_v3quote() {
-    assert!(!verify().is_err());
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    use sample_v3quote::{SAMPLE_INTEL_CERT_CHAIN, SAMPLE_V3QUOTE};
+
+    #[test]
+    fn verify_sample_v3quote() {
+        #[cfg(feature = "chain_get")]
+        let cert_chain = get_intel_cert_chain_pem().unwrap();
+
+        #[cfg(not(feature = "chain_get"))]
+        let cert_chain = SAMPLE_INTEL_CERT_CHAIN;
+
+        assert!(verify(&SAMPLE_V3QUOTE[..], &cert_chain).is_ok());
+    }
 }

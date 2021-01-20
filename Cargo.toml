@@ -22,7 +22,8 @@ is-it-maintained-open-issues = { repository = "enarx/sgx" }
 
 [features]
 default = []
-crypto = ["std", "openssl", "percent-encoding", "reqwest"]
+crypto = ["std", "openssl"]
+chain_get = ["std", "percent-encoding", "reqwest"]
 std = ["iocuddle", "libc", "mmarinus", "vdso"]
 asm = ["xsave/asm"]
 
