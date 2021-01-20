@@ -5,7 +5,7 @@
 use super::QuoteError;
 use crate::attestation_types::report::Body;
 use openssl::x509::X509;
-use std::{convert::TryFrom, fmt, vec::Vec};
+use std::{convert::TryFrom, error::Error, fmt, vec::Vec};
 
 /// ECDSA  signature, the r component followed by the
 /// s component, 2 x 32 bytes.
@@ -315,5 +315,30 @@ impl SigData {
         let mut v = Vec::new();
         v.extend(&self.qe_cert_data);
         v
+    }
+
+    /// Returns QE Cert Data as a PCK certificate chain, if QE Cert Data is of the appropriate type
+    pub fn qe_cert_data_pckchain(&self) -> Result<PckCertChain, Box<dyn Error>> {
+        if self.qe_cert_data_type != CertDataType::PCKCertChain {
+            return Err(Box::new(QuoteError(
+                "cannot return cert data as PCK cert chain; cert data is not PCK cert chain type"
+                    .to_string(),
+            )));
+        }
+
+        // Necessary because the formatting embedded in the Quote is incorrect. Fix later.
+        let chain = String::from_utf8(self.qe_cert_data_vec())?
+            .replace("-----END CERTIFICATE-----", "-----END CERTIFICATE-----\n");
+
+        let pck_cert_chain = X509::stack_from_pem(&chain.as_bytes().to_vec()[..])?;
+        let leaf_cert = pck_cert_chain[0].clone();
+        let intermed_cert = pck_cert_chain[1].clone();
+        let root_cert = pck_cert_chain[2].clone();
+
+        Ok(PckCertChain {
+            leaf_cert,
+            intermed_cert,
+            root_cert,
+        })
     }
 }
