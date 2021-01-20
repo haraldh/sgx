@@ -4,8 +4,8 @@
 
 use super::QuoteError;
 use crate::attestation_types::report::Body;
-use std::{convert::TryFrom, fmt, vec::Vec};
 use openssl::x509::X509;
+use std::{convert::TryFrom, fmt, vec::Vec};
 
 /// ECDSA  signature, the r component followed by the
 /// s component, 2 x 32 bytes.
@@ -205,6 +205,7 @@ pub struct SigData {
     qe_report_sig: ECDSAP256Sig,
     qe_auth: Vec<u8>,
     qe_cert_data_type: CertDataType,
+    qe_cert_data_len: u32,
     qe_cert_data: Vec<u8>,
 }
 
@@ -251,10 +252,12 @@ impl TryFrom<&[u8]> for SigData {
         let cert_data_len_start = qe_auth_end + 2;
         let mut cert_data_len_bytes = [0u8; 4];
         cert_data_len_bytes.copy_from_slice(&bytes[cert_data_len_start..(cert_data_len_start + 4)]);
-        let cert_data_len = u32::from_le_bytes(cert_data_len_bytes) as usize;
+        let qe_cert_data_len = u32::from_le_bytes(cert_data_len_bytes);
         let cert_data_start = cert_data_len_start + 4;
-        let mut qe_cert_data = vec![0u8; cert_data_len];
-        qe_cert_data.copy_from_slice(&bytes[cert_data_start..(cert_data_start + cert_data_len)]);
+        let mut qe_cert_data = vec![0u8; qe_cert_data_len as usize];
+        qe_cert_data.copy_from_slice(
+            &bytes[cert_data_start..(cert_data_start + qe_cert_data_len as usize)],
+        );
 
         Ok(Self {
             isv_enclave_report_sig,
@@ -263,6 +266,7 @@ impl TryFrom<&[u8]> for SigData {
             qe_report_sig,
             qe_auth,
             qe_cert_data_type,
+            qe_cert_data_len,
             qe_cert_data,
         })
     }
@@ -297,6 +301,11 @@ impl SigData {
     /// Retrieve the QE Cert Data type
     pub fn get_qe_cert_data_type(&self) -> CertDataType {
         self.qe_cert_data_type
+    }
+
+    /// Retrieve the QE Cert Data length
+    pub fn get_qe_cert_data_len(&self) -> u32 {
+        self.qe_cert_data_len
     }
 
     /// Retrieve the QE Cert Data
