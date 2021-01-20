@@ -5,6 +5,7 @@
 use super::QuoteError;
 use crate::attestation_types::report::Body;
 use std::{convert::TryFrom, fmt, vec::Vec};
+use openssl::x509::X509;
 
 /// ECDSA  signature, the r component followed by the
 /// s component, 2 x 32 bytes.
@@ -94,6 +95,36 @@ impl ECDSAPubKey {
         vec.extend(&self.x);
         vec.extend(&self.y);
         vec
+    }
+}
+
+#[derive(Clone, Debug)]
+/// PCK Certificate Chain type of CertData
+pub struct PckCertChain {
+    /// Leaf certificate
+    pub leaf_cert: X509,
+
+    /// Intermediate certificate
+    pub intermed_cert: X509,
+
+    /// Root certificate
+    pub root_cert: X509,
+}
+
+impl PckCertChain {
+    /// Returns leaf certificate
+    pub fn leaf_cert(&self) -> &X509 {
+        &self.leaf_cert
+    }
+
+    /// Returns intermediate certificate
+    pub fn intermed_cert(&self) -> &X509 {
+        &self.intermed_cert
+    }
+
+    /// Returns root certificate
+    pub fn root_cert(&self) -> &X509 {
+        &self.root_cert
     }
 }
 
